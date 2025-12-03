@@ -14,6 +14,7 @@ Make sure crime.duckdb exists (run ingeest_duckdb.py first)
 """
 
 import os
+import requests
 from datetime import datetime
 
 import pandas as pd
@@ -26,6 +27,28 @@ import duckdb
 import dash_leaflet as dl
 
 DB = "crime.duckdb"
+DB_URL = os.environ.get("DB_URL")
+
+
+def ensure_db():
+    """Download DuckDB file from DB_URL if it doesn't exist locally."""
+    if os.path.exists(DB):
+        print(f"[DB] Using local DB: {DB}")
+        return
+    if not DB_URL:
+        print("[DB] DB_URL is not set. DB file will not be downloaded.")
+        return
+    print(f"[DB] Downloading DB from {DB_URL} ...")
+    try:
+        resp = requests.get(DB_URL, stream=True)
+        resp.raise_for_status()
+        with open(DB, "wb") as f:
+            for chunk in resp.iter_content(1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        print("[DB] Download complete.")
+    except Exception as e:
+        print(f"[DB] Failed to download DB: {e}")
 
 def get_date_range():
     """Get min and max date from DuckDB."""
@@ -760,6 +783,8 @@ def update_by_polygon(selected_date, poly_geojson, hour_value, category_value, p
         fig_pie, fig_bar, markers, table, hour_label
     )
 
+
+ensure_db()
 
 if __name__ == "__main__":
     # Check if DB exists
