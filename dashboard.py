@@ -30,6 +30,50 @@ DB = "crime.duckdb"
 DB_URL = os.environ.get("DB_URL")
 
 
+def get_google_drive_download_url(url: str) -> str:
+    """Convert Google Drive sharing URL to direct download URL."""
+    # Handle various Google Drive URL formats
+    if "drive.google.com" in url:
+        # Extract file ID from different URL formats
+        if "/file/d/" in url:
+            # Format: https://drive.google.com/file/d/{FILE_ID}/view...
+            file_id = url.split("/file/d/")[1].split("/")[0]
+        elif "id=" in url:
+            # Format: https://drive.google.com/uc?id={FILE_ID}...
+            file_id = url.split("id=")[1].split("&")[0]
+        else:
+            return url  # Return as-is if format is unknown
+        return f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
+    return url
+
+
+def download_from_google_drive(url: str, destination: str):
+    """Download a file from Google Drive, handling large file confirmation."""
+    session = requests.Session()
+    
+    response = session.get(url, stream=True)
+    response.raise_for_status()
+    
+    # Check if we got a confirmation page (for large files)
+    # Google Drive returns HTML with a confirmation token for large files
+    content_type = response.headers.get('Content-Type', '')
+    if 'text/html' in content_type:
+        # Try to find confirmation token in cookies
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                # Add confirmation token to URL
+                url = f"{url}&confirm={value}"
+                response = session.get(url, stream=True)
+                response.raise_for_status()
+                break
+    
+    # Write the file
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(1024 * 1024):  # 1MB chunks
+            if chunk:
+                f.write(chunk)
+
+
 def ensure_db():
     """Download DuckDB file from DB_URL if it doesn't exist locally."""
     if os.path.exists(DB):
@@ -40,12 +84,18 @@ def ensure_db():
         return
     print(f"[DB] Downloading DB from {DB_URL} ...")
     try:
-        resp = requests.get(DB_URL, stream=True)
-        resp.raise_for_status()
-        with open(DB, "wb") as f:
-            for chunk in resp.iter_content(1024 * 1024):
-                if chunk:
-                    f.write(chunk)
+        # Convert Google Drive URL if needed
+        download_url = get_google_drive_download_url(DB_URL)
+        
+        if "drive.google.com" in DB_URL:
+            download_from_google_drive(download_url, DB)
+        else:
+            resp = requests.get(download_url, stream=True)
+            resp.raise_for_status()
+            with open(DB, "wb") as f:
+                for chunk in resp.iter_content(1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
         print("[DB] Download complete.")
     except Exception as e:
         print(f"[DB] Failed to download DB: {e}")
