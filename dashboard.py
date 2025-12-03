@@ -14,6 +14,7 @@ Make sure crime.duckdb exists (run ingeest_duckdb.py first)
 """
 
 import os
+import re
 import requests
 from datetime import datetime
 
@@ -30,48 +31,77 @@ DB = "crime.duckdb"
 DB_URL = os.environ.get("DB_URL")
 
 
-def get_google_drive_download_url(url: str) -> str:
-    """Convert Google Drive sharing URL to direct download URL."""
-    # Handle various Google Drive URL formats
+def get_google_drive_file_id(url: str) -> str:
+    """Extract file ID from Google Drive URL."""
     if "drive.google.com" in url:
-        # Extract file ID from different URL formats
         if "/file/d/" in url:
-            # Format: https://drive.google.com/file/d/{FILE_ID}/view...
-            file_id = url.split("/file/d/")[1].split("/")[0]
+            return url.split("/file/d/")[1].split("/")[0]
         elif "id=" in url:
-            # Format: https://drive.google.com/uc?id={FILE_ID}...
-            file_id = url.split("id=")[1].split("&")[0]
-        else:
-            return url  # Return as-is if format is unknown
-        return f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
-    return url
+            return url.split("id=")[1].split("&")[0]
+    return None
 
 
-def download_from_google_drive(url: str, destination: str):
+def download_from_google_drive(file_id: str, destination: str):
     """Download a file from Google Drive, handling large file confirmation."""
     session = requests.Session()
     
+    # First request to get cookies and potential confirmation token
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
     response = session.get(url, stream=True)
     response.raise_for_status()
     
-    # Check if we got a confirmation page (for large files)
-    # Google Drive returns HTML with a confirmation token for large files
+    # Check for confirmation token in response
+    # Google Drive returns a confirmation page for large files
+    token = None
+    
+    # Method 1: Check cookies for download_warning token
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            token = value
+            break
+    
+    # Method 2: Try to extract token from HTML response
+    if token is None:
+        content_type = response.headers.get('Content-Type', '')
+        if 'text/html' in content_type:
+            # Read a small portion to check for confirmation form
+            content = response.content.decode('utf-8', errors='ignore')
+            # Look for confirm token in the HTML
+            match = re.search(r'confirm=([0-9A-Za-z_-]+)', content)
+            if match:
+                token = match.group(1)
+            else:
+                # Try another pattern
+                match = re.search(r'id="download-form".*?name="confirm".*?value="([^"]+)"', content, re.DOTALL)
+                if match:
+                    token = match.group(1)
+    
+    # If we found a token, make a new request with confirmation
+    if token:
+        url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={token}"
+        response = session.get(url, stream=True)
+        response.raise_for_status()
+    
+    # Final check: if still HTML, try direct download URL with confirm=t
     content_type = response.headers.get('Content-Type', '')
     if 'text/html' in content_type:
-        # Try to find confirmation token in cookies
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                # Add confirmation token to URL
-                url = f"{url}&confirm={value}"
-                response = session.get(url, stream=True)
-                response.raise_for_status()
-                break
+        # Try alternative download method
+        url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+        response = session.get(url, stream=True)
+        response.raise_for_status()
     
     # Write the file
     with open(destination, "wb") as f:
         for chunk in response.iter_content(1024 * 1024):  # 1MB chunks
             if chunk:
                 f.write(chunk)
+    
+    # Verify the downloaded file is not HTML
+    with open(destination, "rb") as f:
+        header = f.read(100)
+        if b'<!DOCTYPE' in header or b'<html' in header.lower():
+            os.remove(destination)
+            raise Exception("Downloaded file is HTML, not the actual database file. Please check Google Drive sharing settings.")
 
 
 def ensure_db():
@@ -84,13 +114,15 @@ def ensure_db():
         return
     print(f"[DB] Downloading DB from {DB_URL} ...")
     try:
-        # Convert Google Drive URL if needed
-        download_url = get_google_drive_download_url(DB_URL)
+        # Check if it's a Google Drive URL
+        file_id = get_google_drive_file_id(DB_URL)
         
-        if "drive.google.com" in DB_URL:
-            download_from_google_drive(download_url, DB)
+        if file_id:
+            print(f"[DB] Detected Google Drive file ID: {file_id}")
+            download_from_google_drive(file_id, DB)
         else:
-            resp = requests.get(download_url, stream=True)
+            # Regular URL download
+            resp = requests.get(DB_URL, stream=True)
             resp.raise_for_status()
             with open(DB, "wb") as f:
                 for chunk in resp.iter_content(1024 * 1024):
@@ -99,6 +131,9 @@ def ensure_db():
         print("[DB] Download complete.")
     except Exception as e:
         print(f"[DB] Failed to download DB: {e}")
+        # Clean up partial download
+        if os.path.exists(DB):
+            os.remove(DB)
 
 def get_date_range():
     """Get min and max date from DuckDB."""
