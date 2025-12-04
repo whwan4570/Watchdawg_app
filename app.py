@@ -298,6 +298,9 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 app = Dash(__name__, external_stylesheets=[dbc.themes.DARKLY], suppress_callback_exceptions=True)
 app.title = "Seattle Crime Dashboard"
 
+# Expose server for gunicorn
+server = app.server
+
 # Get initial date range from DB
 initial_date_range = get_date_range()
 
