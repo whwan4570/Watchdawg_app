@@ -1,0 +1,9 @@
+dash
+dash-bootstrap-components
+dash-mantine-components
+pandas
+numpy
+plotly
+databricks-sql-connector
+databricks-sdk
+python-dotenv
