@@ -28,8 +28,8 @@ import gdown
 # CSV file path (relative to app.py)
 CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.csv')
 
-# Google Drive file ID for the CSV file
-GDRIVE_FILE_ID = os.environ.get('GDRIVE_FILE_ID', '1Bscm4EEB301ODzaAzbqwna7ttklHsKtG')
+# Google Drive URL for the CSV file
+GDRIVE_URL = os.environ.get('GDRIVE_URL', 'https://drive.google.com/file/d/1Bscm4EEB301ODzaAzbqwna7ttklHsKtG/view?usp=sharing')
 
 def ensure_csv_exists():
     """Download CSV file from Google Drive if it doesn't exist locally."""
@@ -37,14 +37,13 @@ def ensure_csv_exists():
         print(f"✅ CSV file exists: {CSV_FILE_PATH}")
         return True
     
-    if not GDRIVE_FILE_ID:
-        print("❌ CSV file not found and GDRIVE_FILE_ID not set!")
+    if not GDRIVE_URL:
+        print("❌ CSV file not found and GDRIVE_URL not set!")
         return False
     
-    gdrive_url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
-    print(f"📥 Downloading CSV from Google Drive (ID: {GDRIVE_FILE_ID})")
+    print(f"📥 Downloading CSV from Google Drive: {GDRIVE_URL}")
     try:
-        gdown.download(gdrive_url, CSV_FILE_PATH, quiet=False)
+        gdown.download(GDRIVE_URL, CSV_FILE_PATH, quiet=False, fuzzy=True)
         print(f"✅ Downloaded CSV to: {CSV_FILE_PATH}")
         return True
     except Exception as e:
