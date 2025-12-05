@@ -9,5 +9,5 @@ services:
         value: "3.11"
       - key: DASH_DEBUG
         value: "0"
-      - key: GDRIVE_FILE_ID
-        value: "1Bscm4EEB301ODzaAzbqwna7ttklHsKtG"
+      - key: GDRIVE_URL
+        value: "https://drive.google.com/file/d/1Bscm4EEB301ODzaAzbqwna7ttklHsKtG/view?usp=sharing"
