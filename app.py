@@ -301,6 +301,25 @@ app.title = "Seattle Crime Dashboard"
 # Expose server for gunicorn
 server = app.server
 
+# Pre-warm cache on module import (works with gunicorn)
+def _prewarm_cache():
+    """Pre-warm the data cache - called on module import for production."""
+    import sys
+    print("\n🔥 Pre-warming data cache...")
+    try:
+        initial_data = load_all_data()
+        if initial_data is not None and len(initial_data) > 0:
+            print(f"✅ Cache pre-warmed successfully with {len(initial_data):,} records")
+        else:
+            print("⚠️  WARNING: Data cache is empty! Check your Databricks connection.", file=sys.stderr)
+    except Exception as e:
+        print(f"❌ ERROR: Failed to pre-warm cache: {str(e)}", file=sys.stderr)
+        print("⚠️  The app will start but visualizations may not work until connection is established.", file=sys.stderr)
+
+# Only pre-warm if credentials are configured (skip in dev without creds)
+if WAREHOUSE_ID and DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET:
+    _prewarm_cache()
+
 # Get initial date range from DB
 initial_date_range = get_date_range()
 
@@ -2222,31 +2241,19 @@ def update_map_points(poly_geojson, hour_value, category_value, neighborhood_val
 
 
 if __name__ == "__main__":
-    # Check data source
+    # Show configuration info (for local development)
     if not WAREHOUSE_ID or not DATABRICKS_CLIENT_ID or not DATABRICKS_CLIENT_SECRET:
         print(f"⚠️  Warning: Databricks credentials not fully configured!")
         print(f"   Required: DATABRICKS_WAREHOUSE_ID, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET")
         print()
     else:
-        print(f"🔗 Connecting to Databricks with Service Principal:")
+        print(f"🔗 Databricks Configuration:")
         print(f"  Host: {DATABRICKS_HOST}")
         print(f"  Catalog: {CATALOG}")
         print(f"  Schema: {SCHEMA}")
         print(f"  Warehouse ID: {WAREHOUSE_ID}")
         print(f"  Table: {CATALOG}.{SCHEMA}.crime_gold_data")
         print()
-
-    # Pre-warm the data cache on startup
-    print("\n🔥 Pre-warming data cache...")
-    try:
-        initial_data = load_all_data()
-        if initial_data is not None and len(initial_data) > 0:
-            print(f"✅ Cache pre-warmed successfully with {len(initial_data):,} records")
-        else:
-            print("⚠️  WARNING: Data cache is empty! Check your Databricks connection.")
-    except Exception as e:
-        print(f"❌ ERROR: Failed to pre-warm cache: {str(e)}")
-        print("⚠️  The app will start but visualizations may not work until connection is established.")
     
     port = int(os.environ.get('PORT', 8050))
     print(f"\n{'='*60}")
@@ -2254,7 +2261,6 @@ if __name__ == "__main__":
     print(f"{'='*60}\n")
     print("Press Ctrl+C to stop the server.\n")
     
-    # Disable automatic browser opening
+    # Debug mode for local development
     debug_mode = os.environ.get("DASH_DEBUG", "1") == "1"
-
     app.run(host='0.0.0.0', port=port, debug=debug_mode, dev_tools_hot_reload=True)
