@@ -9,3 +9,5 @@ databricks-sdk
 python-dotenv
 gunicorn
 requests
+databricks-sql-connector
+pyarrow
