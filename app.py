@@ -23,99 +23,90 @@ from dash import Dash, html, dcc, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 from dash import dash_table
 import dash_mantine_components as dmc
+import sqlite3
+import gdown
 
-# Data file paths (relative to app.py)
-PARQUET_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.parquet')
-CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.csv')
+# Data file path (relative to app.py)
+DB_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.db')
+
+# Google Drive URL for SQLite database (optional)
+DB_GDRIVE_URL = os.environ.get('DB_GDRIVE_URL', 'https://drive.google.com/file/d/174V6MxBsK-q_bLbzmEDuxp3e5CaBbUel/view?usp=sharing')
+
+def ensure_db_file_exists():
+    """Download SQLite database from Google Drive if it doesn't exist locally."""
+    if os.path.exists(DB_FILE_PATH):
+        print(f"✅ SQLite database exists: {DB_FILE_PATH}")
+        return True
+    
+    # Try to download from Google Drive if URL is provided
+    if DB_GDRIVE_URL:
+        print(f"📥 Downloading SQLite database from Google Drive: {DB_GDRIVE_URL}")
+        try:
+            gdown.download(DB_GDRIVE_URL, DB_FILE_PATH, quiet=False, fuzzy=True)
+            print(f"✅ Downloaded SQLite database to: {DB_FILE_PATH}")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to download SQLite database: {e}")
+            return False
+    
+    print("⚠️  No SQLite database found locally and no Google Drive URL provided")
+    return False
+
+# Download database file on module load (for gunicorn) - only if file doesn't exist
+if not os.path.exists(DB_FILE_PATH):
+    ensure_db_file_exists()
 
 # Data cache - stores all data in memory for fast access
 _data_cache = None
 _cache_timestamp = None
+_db_connection = None
 
-def load_from_parquet():
-    """Load data from Parquet file."""
+def get_db_connection():
+    """Get SQLite database connection."""
+    global _db_connection
+    if _db_connection is None and os.path.exists(DB_FILE_PATH):
+        _db_connection = sqlite3.connect(DB_FILE_PATH, check_same_thread=False)
+    return _db_connection
+
+def load_from_sqlite():
+    """Load data from SQLite database."""
     try:
-        if not os.path.exists(PARQUET_FILE_PATH):
-            print(f"❌ Parquet file not found: {PARQUET_FILE_PATH}")
+        conn = get_db_connection()
+        if not conn:
             return None
         
-        print(f"🔄 Loading data from Parquet file: {PARQUET_FILE_PATH}")
-        df = pd.read_parquet(PARQUET_FILE_PATH)
-        print(f"📊 Read {len(df)} rows from Parquet")
-        print(f"📋 Columns in Parquet file: {list(df.columns)}")
+        print(f"🔄 Loading data from SQLite database: {DB_FILE_PATH}")
         
-        # Check if Parquet has already processed columns (lowercase with underscores)
-        # or original CSV columns (with spaces and capitals)
-        if 'latitude' in df.columns and 'longitude' in df.columns:
-            # Already processed - just filter
-            df = df[df['latitude'].notna() & df['longitude'].notna()].copy()
-            print(f"📍 After filtering for valid coordinates: {len(df)} records")
-            
-            # Ensure datetime column exists
-            if 'datetime' not in df.columns and 'date' in df.columns and 'time' in df.columns:
-                df['datetime'] = df['date'].astype(str) + ' ' + df['time'].astype(str)
-        elif 'Latitude' in df.columns and 'Longitude' in df.columns:
-            # Original CSV format - need to process like CSV
-            df = df[df['Latitude'].notna() & df['Longitude'].notna()].copy()
-            print(f"📍 After filtering for valid coordinates: {len(df)} records")
-            
-            # Create derived columns to match the expected schema
-            df['date'] = pd.to_datetime(
-                df['Offense Year'].astype(int).astype(str) + '-' + 
-                df['Offense Month'].astype(int).astype(str).str.zfill(2) + '-' + 
-                df['Offense Day'].astype(int).astype(str).str.zfill(2),
-                format='%Y-%m-%d',
-                errors='coerce'
-            )
-            
-            df['time'] = df['Offense Time'].astype(str)
-            df['hour'] = pd.to_datetime(df['Offense Time'], format='%H:%M:%S', errors='coerce').dt.hour
-            df['hour'] = df['hour'].fillna(0).astype(int)
-            df['datetime'] = df['date'].astype(str) + ' ' + df['Offense Time'].astype(str)
-            
-            # Rename columns
-            df = df.rename(columns={
-                'Offense Category': 'offense',
-                'Offense Sub Category': 'offense_sub_category',
-                'NIBRS Crime Against Category': 'crime_against_category',
-                'Block Address': 'location',
-                'Neighborhood': 'area',
-                'Precinct': 'precinct',
-                'Sector': 'sector',
-                'Hazardness': 'hazardness',
-                'Latitude': 'latitude',
-                'Longitude': 'longitude'
-            })
-            
-            # Select only the columns we need
-            df = df[['date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
-                     'crime_against_category', 'location', 'area', 'precinct', 'sector',
-                     'hazardness', 'latitude', 'longitude']].copy()
-        else:
-            print("⚠️  Unexpected column structure in Parquet file")
-            print(f"   Available columns: {list(df.columns)}")
-            print("   Expected either 'latitude'/'longitude' or 'Latitude'/'Longitude'")
-            # Try to use whatever columns are available
-            print("   Attempting to use available columns...")
-            # Return None to fall back to CSV or show error
-            return None
+        # Query all data (can be optimized to load only what's needed)
+        query = """
+        SELECT 
+            date, time, hour, datetime, offense, offense_sub_category,
+            crime_against_category, location, area, precinct, sector,
+            hazardness, latitude, longitude
+        FROM crimes
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        """
         
-        # Optimize memory usage - CRITICAL for Render free plan (512MB limit)
+        df = pd.read_sql_query(query, conn)
+        print(f"📊 Read {len(df)} rows from SQLite")
+        
+        # Convert date column to datetime
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        
+        # Optimize memory usage
         print("💾 Optimizing memory usage...")
         
-        # Convert string columns to category (saves 50-90% memory for repeated values)
+        # Convert string columns to category
         string_cols = ['offense', 'offense_sub_category', 'crime_against_category', 
                       'area', 'precinct', 'sector', 'time']
         for col in string_cols:
             if col in df.columns:
                 df[col] = df[col].astype('category')
         
-        # Location column is too unique - keep as string but optimize
-        # (can't use category for highly unique values)
-        
         # Optimize numeric types
         if 'hour' in df.columns:
-            df['hour'] = df['hour'].astype('int8')  # 0-23 fits in int8
+            df['hour'] = df['hour'].astype('int8')
         if 'hazardness' in df.columns:
             df['hazardness'] = pd.to_numeric(df['hazardness'], errors='coerce').astype('float32')
         if 'latitude' in df.columns:
@@ -123,114 +114,22 @@ def load_from_parquet():
         if 'longitude' in df.columns:
             df['longitude'] = df['longitude'].astype('float32')
         
-        # Check memory usage
         memory_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
-        print(f"✅ Successfully loaded {len(df)} records from Parquet")
+        print(f"✅ Successfully loaded {len(df)} records from SQLite")
         print(f"💾 DataFrame memory: {memory_mb:.2f} MB")
         
         return df
         
     except Exception as e:
-        print(f"❌ Error loading Parquet: {str(e)}")
+        print(f"❌ Error loading from SQLite: {str(e)}")
         import traceback
         traceback.print_exc()
         return None
 
-def load_from_csv():
-    """Load data from CSV file."""
-    # Check if CSV file exists first
-    if not os.path.exists(CSV_FILE_PATH):
-        print(f"❌ CSV file not found: {CSV_FILE_PATH}")
-        return None
-    
-    try:
-        # Read CSV file
-        df = pd.read_csv(CSV_FILE_PATH)
-        print(f"📊 Read {len(df)} rows from CSV")
-        
-        # Filter out records without coordinates
-        df = df[df['Latitude'].notna() & df['Longitude'].notna()].copy()
-        print(f"📍 After filtering for valid coordinates: {len(df)} records")
-        
-        # Create derived columns to match the expected schema
-        # Build date from year/month/day columns
-        df['date'] = pd.to_datetime(
-            df['Offense Year'].astype(int).astype(str) + '-' + 
-            df['Offense Month'].astype(int).astype(str).str.zfill(2) + '-' + 
-            df['Offense Day'].astype(int).astype(str).str.zfill(2),
-            format='%Y-%m-%d',
-            errors='coerce'
-        )
-        
-        # Time column
-        df['time'] = df['Offense Time'].astype(str)
-        
-        # Extract hour from time
-        df['hour'] = pd.to_datetime(df['Offense Time'], format='%H:%M:%S', errors='coerce').dt.hour
-        # Fill missing hours with 0
-        df['hour'] = df['hour'].fillna(0).astype(int)
-        
-        # Create datetime string
-        df['datetime'] = df['date'].astype(str) + ' ' + df['Offense Time'].astype(str)
-        
-        # Rename columns to match expected schema
-        df = df.rename(columns={
-            'Offense Category': 'offense',
-            'Offense Sub Category': 'offense_sub_category',
-            'NIBRS Crime Against Category': 'crime_against_category',
-            'Block Address': 'location',
-            'Neighborhood': 'area',
-            'Precinct': 'precinct',
-            'Sector': 'sector',
-            'Hazardness': 'hazardness',
-            'Latitude': 'latitude',
-            'Longitude': 'longitude'
-        })
-        
-        # Select only the columns we need
-        result = df[['date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
-                     'crime_against_category', 'location', 'area', 'precinct', 'sector',
-                     'hazardness', 'latitude', 'longitude']].copy()
-        
-        # Optimize memory usage by converting data types
-        print("💾 Optimizing memory usage...")
-        
-        # Convert string columns to category (saves significant memory)
-        string_cols = ['offense', 'offense_sub_category', 'crime_against_category', 
-                      'location', 'area', 'precinct', 'sector', 'time']
-        for col in string_cols:
-            if col in result.columns:
-                result[col] = result[col].astype('category')
-        
-        # Optimize numeric types
-        if 'hour' in result.columns:
-            result['hour'] = result['hour'].astype('int8')  # 0-23 fits in int8
-        if 'hazardness' in result.columns:
-            result['hazardness'] = pd.to_numeric(result['hazardness'], errors='coerce').astype('float32')
-        if 'latitude' in result.columns:
-            result['latitude'] = result['latitude'].astype('float32')
-        if 'longitude' in result.columns:
-            result['longitude'] = result['longitude'].astype('float32')
-        
-        # datetime column as string
-        if 'datetime' in result.columns:
-            result['datetime'] = result['datetime'].astype('string')
-        
-        memory_mb = result.memory_usage(deep=True).sum() / (1024 * 1024)
-        print(f"✅ Successfully loaded {len(result)} records from CSV")
-        print(f"💾 Memory usage: {memory_mb:.2f} MB")
-        return result
-        
-    except Exception as e:
-        print(f"❌ Error loading CSV: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 def load_all_data(force_refresh=False):
     """
-    Load and cache ALL data in memory from Parquet or CSV file.
-    Prefers Parquet format for better performance, falls back to CSV.
+    Load and cache ALL data in memory from SQLite database.
     
     Args:
         force_refresh: If True, bypass cache and reload from source
@@ -246,49 +145,33 @@ def load_all_data(force_refresh=False):
         # Return copy only if force_refresh is needed, otherwise return view
         return _data_cache.copy() if force_refresh else _data_cache
     
-    # Try Parquet first (preferred format - smaller and faster)
-    print(f"🔍 Checking for data files...")
-    print(f"   Parquet path: {PARQUET_FILE_PATH}")
-    print(f"   CSV path: {CSV_FILE_PATH}")
-    print(f"   Parquet exists: {os.path.exists(PARQUET_FILE_PATH)}")
-    print(f"   CSV exists: {os.path.exists(CSV_FILE_PATH)}")
+    # Load from SQLite database
+    print(f"🔍 Checking for SQLite database...")
+    print(f"   SQLite path: {DB_FILE_PATH}")
+    print(f"   SQLite exists: {os.path.exists(DB_FILE_PATH)}")
     
-    if os.path.exists(PARQUET_FILE_PATH):
-        print(f"🔄 Loading data from Parquet file...")
-        df = load_from_parquet()
+    if os.path.exists(DB_FILE_PATH):
+        print(f"🔄 Loading data from SQLite database...")
+        df = load_from_sqlite()
         if df is not None and not df.empty:
             result = df.copy()
-            print(f"✅ Parquet load successful: {len(result)} records")
+            print(f"✅ SQLite load successful: {len(result)} records")
         else:
-            print("⚠️  Parquet load failed or returned empty, falling back to CSV...")
-            df = load_from_csv()
-            if df is not None and not df.empty:
-                result = df
-                print(f"✅ CSV load successful: {len(result)} records")
-            else:
-                print("❌ Both Parquet and CSV loads failed")
-                result = pd.DataFrame(columns=[
-                    'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
-                    'crime_against_category', 'location', 'area', 'precinct', 'sector',
-                    'hazardness', 'latitude', 'longitude'
-                ])
-    else:
-        # Load from CSV if Parquet doesn't exist
-        print(f"🔄 Parquet file not found, loading from CSV...")
-        df = load_from_csv()
-        if df is not None and not df.empty:
-            result = df
-            print(f"✅ CSV load successful: {len(result)} records")
-        else:
-            print("❌ CSV file not found or load failed.")
-            print(f"   Checked paths:")
-            print(f"   - Parquet: {PARQUET_FILE_PATH}")
-            print(f"   - CSV: {CSV_FILE_PATH}")
+            print("❌ SQLite load failed")
             result = pd.DataFrame(columns=[
                 'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
                 'crime_against_category', 'location', 'area', 'precinct', 'sector',
                 'hazardness', 'latitude', 'longitude'
             ])
+    else:
+        print("❌ SQLite database not found")
+        print(f"   Expected: {DB_FILE_PATH}")
+        print("   Please run: python convert_to_sqlite.py")
+        result = pd.DataFrame(columns=[
+            'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
+            'crime_against_category', 'location', 'area', 'precinct', 'sector',
+            'hazardness', 'latitude', 'longitude'
+        ])
     
     # Cache the result
     _data_cache = result
@@ -1038,24 +921,20 @@ def display_cache_info(_, refresh_count):
             df = load_all_data()
             if df is not None and len(df) > 0:
                 record_count = len(df)
-                source = "Parquet" if os.path.exists(PARQUET_FILE_PATH) else "CSV"
                 return [
                     html.Div(f"📊 {record_count:,} records", className="small"),
-                    html.Div(f"📁 Source: crime_data_gold.{source.lower()}", className="small")
+                    html.Div("📁 Source: crime_data_gold.db", className="small")
                 ]
         except Exception as e:
             print(f"❌ Error loading data in display_cache_info: {e}")
             import traceback
             traceback.print_exc()
         
-        # Check which files exist
-        parquet_exists = os.path.exists(PARQUET_FILE_PATH)
-        csv_exists = os.path.exists(CSV_FILE_PATH)
-        
-        if not parquet_exists and not csv_exists:
+        # Check if database exists
+        if not os.path.exists(DB_FILE_PATH):
             return html.Div([
                 html.I(className="bi bi-exclamation-triangle text-warning me-1"),
-                "No data file found - check Parquet or CSV file"
+                "No database file found - run: python convert_to_sqlite.py"
             ], className="small text-warning")
         else:
             return html.Div([
@@ -1064,11 +943,10 @@ def display_cache_info(_, refresh_count):
             ], className="small text-warning")
     
     record_count = len(_data_cache) if _data_cache is not None else 0
-    source = "Parquet" if os.path.exists(PARQUET_FILE_PATH) else "CSV"
     
     return [
         html.Div(f"📊 {record_count:,} records", className="small"),
-        html.Div(f"📁 Source: crime_data_gold.{source.lower()}", className="small")
+        html.Div("📁 Source: crime_data_gold.db", className="small")
     ]
 
 # Toggle sidebar collapse/expand
@@ -2337,15 +2215,13 @@ def update_map_points(poly_geojson, hour_value, category_value, neighborhood_val
 
 
 if __name__ == "__main__":
-    # Check which data file exists
-    if os.path.exists(PARQUET_FILE_PATH):
-        print(f"📁 Data source: {PARQUET_FILE_PATH} (Parquet - optimized)")
-    elif os.path.exists(CSV_FILE_PATH):
-        print(f"📁 Data source: {CSV_FILE_PATH} (CSV)")
-        print("💡 Tip: Convert to Parquet for better performance: python convert_to_parquet.py")
+    # Check if database exists
+    if os.path.exists(DB_FILE_PATH):
+        print(f"📁 Data source: {DB_FILE_PATH} (SQLite)")
     else:
-        print(f"⚠️  Warning: No data file found")
-        print(f"   Expected: {PARQUET_FILE_PATH} or {CSV_FILE_PATH}")
+        print(f"⚠️  Warning: SQLite database not found")
+        print(f"   Expected: {DB_FILE_PATH}")
+        print("   Please run: python convert_to_sqlite.py")
     print()
 
     # Pre-warm the data cache on startup
