@@ -350,8 +350,9 @@ app = Dash(__name__, external_stylesheets=[dbc.themes.DARKLY], suppress_callback
 app.title = "Seattle Crime Dashboard"
 server = app.server  # Expose for gunicorn
 
-# Get initial date range from DB
-initial_date_range = get_date_range()
+# Get initial date range from DB (lazy load - will be loaded on first request)
+# Don't load data at module import time to avoid blocking gunicorn startup
+initial_date_range = {'min': '', 'max': ''}
 
 header = html.Div(
     [
