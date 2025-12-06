@@ -2,6 +2,100 @@
 
 An interactive dashboard for visualizing Seattle crime data using Dash and SQLite. This dashboard provides real-time incident visualization and statistical insights.
 
+## DATA Cleaning
+Data can available to download at https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data. 
+The raw crime data from the Seattle Police Department undergoes comprehensive cleaning and preprocessing before being loaded into the SQLite database. The cleaning process is documented in `Data Cleaning.ipynb` and includes the following steps:
+
+### 1. Missing Value Standardization
+
+- Replace placeholder values (`-`, `REDACTED`, `-1.0`) with `NaN` across all columns
+- Standardize missing data representation for consistent handling
+
+### 2. Geographic Data Validation
+
+- Convert `Latitude` and `Longitude` to numeric types
+- Validate coordinate ranges:
+  - Latitude: 47.0° to 48.1° (Seattle area bounds)
+  - Longitude: -123.5° to -121.0° (Seattle area bounds)
+- Remove records with invalid or out-of-range coordinates
+
+### 3. Neighborhood Data Cleaning
+
+- Remove invalid neighborhood values:
+  - `UNKNOWN`
+  - `FK ERROR` (foreign key errors)
+  - `OOJ` (out of jurisdiction)
+- Drop records with missing neighborhood information
+
+### 4. Crime Category Standardization
+
+- Remove invalid `NIBRS Crime Against Category` values:
+  - `ANY`
+  - `NOT_A_CRIME`
+- Ensure all records have valid crime categories (PERSON, PROPERTY, or SOCIETY)
+
+### 5. Offense Sub-Category Cleaning
+
+- Remove invalid sub-category values:
+  - `UNKNOWN`
+  - `999` (invalid code)
+  - Empty strings
+- Drop records with missing offense sub-category
+
+### 6. Location Data Requirements
+
+- Remove records missing `Latitude` or `Longitude` (required for map visualization)
+- Remove records missing `Block Address`
+- Remove records missing `Reporting Area`
+- Remove records missing `Beat` information
+
+### 7. Sector Data Cleaning
+
+- Remove invalid sector values:
+  - `None`
+  - `99` (invalid code)
+- Ensure all records have valid sector assignments
+
+### 8. Shooting Type Handling
+
+- Fill missing `Shooting Type Group` values with `"No Shooting"` to preserve all records
+
+### 9. Temporal Data Processing
+
+- Extract date components from `Offense Date`:
+  - `Offense Year`
+  - `Offense Month`
+  - `Offense Day`
+  - `Offense Time`
+- Convert to appropriate datetime formats for analysis
+
+### 10. Data Type Optimization
+
+- Convert numeric columns to appropriate types (int, float)
+- Optimize string columns for memory efficiency
+- Ensure consistent data types across the dataset
+
+### 11. Column Selection and Renaming
+
+- Select relevant columns for dashboard visualization
+- Rename columns to standardized names:
+  - `Offense Category` → `offense`
+  - `Offense Sub Category` → `offense_sub_category`
+  - `NIBRS Crime Against Category` → `crime_against_category`
+  - `Block Address` → `location`
+  - `Neighborhood` → `area`
+  - And others as needed
+
+### Result
+
+After cleaning, the dataset contains only records with:
+- Valid geographic coordinates within Seattle boundaries
+- Complete location information (address, neighborhood, precinct, sector)
+- Valid crime classifications
+- Properly formatted temporal data
+
+This ensures high data quality and reliability for all dashboard visualizations and analyses.
+
 ## Features
 
 - 📅 **Date Range Filter**: Select custom date ranges to analyze crime trends
