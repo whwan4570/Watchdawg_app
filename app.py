@@ -24,148 +24,92 @@ import dash_bootstrap_components as dbc
 from dash import dash_table
 import dash_mantine_components as dmc
 
-# Databricks connection settings
-DATABRICKS_WAREHOUSE_ID = os.environ.get('DATABRICKS_WAREHOUSE_ID')
-DATABRICKS_HOST = os.environ.get('DATABRICKS_HOST')
-DATABRICKS_CLIENT_ID = os.environ.get('DATABRICKS_CLIENT_ID')
-DATABRICKS_CLIENT_SECRET = os.environ.get('DATABRICKS_CLIENT_SECRET')
-DATABRICKS_CATALOG = os.environ.get('DATABRICKS_CATALOG', 'data_511')
-DATABRICKS_SCHEMA = os.environ.get('DATABRICKS_SCHEMA', 'default')
-DATABRICKS_OIDC_URL = os.environ.get('DATABRICKS_OIDC_URL')
-
-# Check if Databricks is configured
-USE_DATABRICKS = all([
-    DATABRICKS_WAREHOUSE_ID,
-    DATABRICKS_HOST,
-    DATABRICKS_CLIENT_ID,
-    DATABRICKS_CLIENT_SECRET
-])
-
-# CSV file path (relative to app.py) - only used as fallback if Databricks is not available
+# Data file paths (relative to app.py)
+PARQUET_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.parquet')
 CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.csv')
 
 # Data cache - stores all data in memory for fast access
 _data_cache = None
 _cache_timestamp = None
-_databricks_connection = None
 
-def get_databricks_connection():
-    """Create and return a Databricks SQL connection using OAuth."""
-    global _databricks_connection
-    
-    if not USE_DATABRICKS:
-        return None
-    
-    if _databricks_connection is not None:
-        return _databricks_connection
-    
+def load_from_parquet():
+    """Load data from Parquet file."""
     try:
-        from databricks import sql
+        if not os.path.exists(PARQUET_FILE_PATH):
+            print(f"❌ Parquet file not found: {PARQUET_FILE_PATH}")
+            return None
         
-        print(f"🔌 Connecting to Databricks: {DATABRICKS_HOST}")
+        print(f"🔄 Loading data from Parquet file: {PARQUET_FILE_PATH}")
+        df = pd.read_parquet(PARQUET_FILE_PATH)
+        print(f"📊 Read {len(df)} rows from Parquet")
         
-        # Extract hostname from URL
-        hostname = DATABRICKS_HOST.replace('https://', '').replace('http://', '')
-        http_path = f'/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}'
-        
-        # Create OAuth connection
-        # Note: OAuth connection requires auth_type='oauth' and client credentials
-        connection_params = {
-            'server_hostname': hostname,
-            'http_path': http_path,
-            'auth_type': 'oauth',
-            'client_id': DATABRICKS_CLIENT_ID,
-            'client_secret': DATABRICKS_CLIENT_SECRET,
-        }
-        
-        # Add OIDC endpoint if provided (for custom OAuth endpoints)
-        if DATABRICKS_OIDC_URL:
-            # Extract OIDC endpoint from URL
-            oidc_endpoint = DATABRICKS_OIDC_URL.replace('https://', '').replace('http://', '')
-            connection_params['oidc_endpoint'] = oidc_endpoint
-        
-        _databricks_connection = sql.connect(**connection_params)
-        print("✅ Connected to Databricks successfully")
-        return _databricks_connection
-        
-    except Exception as e:
-        print(f"❌ Failed to connect to Databricks: {e}")
-        import traceback
-        traceback.print_exc()
-        # Try alternative connection method
-        try:
-            print("🔄 Trying alternative OAuth connection method...")
-            from databricks.sql.client import OAuthConnection
+        # Check if Parquet has already processed columns (lowercase with underscores)
+        # or original CSV columns (with spaces and capitals)
+        if 'latitude' in df.columns and 'longitude' in df.columns:
+            # Already processed - just filter
+            df = df[df['latitude'].notna() & df['longitude'].notna()].copy()
+            print(f"📍 After filtering for valid coordinates: {len(df)} records")
             
-            hostname = DATABRICKS_HOST.replace('https://', '').replace('http://', '')
-            http_path = f'/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}'
+            # Ensure datetime column exists
+            if 'datetime' not in df.columns and 'date' in df.columns and 'time' in df.columns:
+                df['datetime'] = df['date'].astype(str) + ' ' + df['time'].astype(str)
+        elif 'Latitude' in df.columns and 'Longitude' in df.columns:
+            # Original CSV format - need to process like CSV
+            df = df[df['Latitude'].notna() & df['Longitude'].notna()].copy()
+            print(f"📍 After filtering for valid coordinates: {len(df)} records")
             
-            _databricks_connection = OAuthConnection(
-                server_hostname=hostname,
-                http_path=http_path,
-                client_id=DATABRICKS_CLIENT_ID,
-                client_secret=DATABRICKS_CLIENT_SECRET
+            # Create derived columns to match the expected schema
+            df['date'] = pd.to_datetime(
+                df['Offense Year'].astype(int).astype(str) + '-' + 
+                df['Offense Month'].astype(int).astype(str).str.zfill(2) + '-' + 
+                df['Offense Day'].astype(int).astype(str).str.zfill(2),
+                format='%Y-%m-%d',
+                errors='coerce'
             )
-            print("✅ Connected to Databricks using alternative method")
-            return _databricks_connection
-        except Exception as e2:
-            print(f"❌ Alternative connection method also failed: {e2}")
+            
+            df['time'] = df['Offense Time'].astype(str)
+            df['hour'] = pd.to_datetime(df['Offense Time'], format='%H:%M:%S', errors='coerce').dt.hour
+            df['hour'] = df['hour'].fillna(0).astype(int)
+            df['datetime'] = df['date'].astype(str) + ' ' + df['Offense Time'].astype(str)
+            
+            # Rename columns
+            df = df.rename(columns={
+                'Offense Category': 'offense',
+                'Offense Sub Category': 'offense_sub_category',
+                'NIBRS Crime Against Category': 'crime_against_category',
+                'Block Address': 'location',
+                'Neighborhood': 'area',
+                'Precinct': 'precinct',
+                'Sector': 'sector',
+                'Hazardness': 'hazardness',
+                'Latitude': 'latitude',
+                'Longitude': 'longitude'
+            })
+            
+            # Select only the columns we need
+            df = df[['date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
+                     'crime_against_category', 'location', 'area', 'precinct', 'sector',
+                     'hazardness', 'latitude', 'longitude']].copy()
+        else:
+            print("⚠️  Unexpected column structure in Parquet file")
             return None
-
-def load_from_databricks():
-    """Load data from Databricks SQL warehouse."""
-    try:
-        conn = get_databricks_connection()
-        if not conn:
-            return None
         
-        # Build query - adjust table name and columns based on your schema
-        query = f"""
-        SELECT 
-            CAST(CONCAT(
-                CAST(Offense_Year AS STRING), '-',
-                LPAD(CAST(Offense_Month AS STRING), 2, '0'), '-',
-                LPAD(CAST(Offense_Day AS STRING), 2, '0')
-            ) AS DATE) AS date,
-            CAST(Offense_Time AS STRING) AS time,
-            HOUR(CAST(Offense_Time AS TIMESTAMP)) AS hour,
-            CONCAT(
-                CAST(CONCAT(
-                    CAST(Offense_Year AS STRING), '-',
-                    LPAD(CAST(Offense_Month AS STRING), 2, '0'), '-',
-                    LPAD(CAST(Offense_Day AS STRING), 2, '0')
-                ) AS DATE),
-                ' ',
-                CAST(Offense_Time AS STRING)
-            ) AS datetime,
-            Offense_Category AS offense,
-            Offense_Sub_Category AS offense_sub_category,
-            NIBRS_Crime_Against_Category AS crime_against_category,
-            Block_Address AS location,
-            Neighborhood AS area,
-            Precinct AS precinct,
-            Sector AS sector,
-            Hazardness AS hazardness,
-            Latitude AS latitude,
-            Longitude AS longitude
-        FROM {DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.crime_data_gold
-        WHERE Latitude IS NOT NULL AND Longitude IS NOT NULL
-        """
-        
-        print(f"📊 Querying Databricks: {DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}")
-        df = pd.read_sql(query, conn)
-        print(f"✅ Loaded {len(df)} records from Databricks")
-        
+        print(f"✅ Successfully loaded {len(df)} records from Parquet")
         return df
         
     except Exception as e:
-        print(f"❌ Error loading from Databricks: {str(e)}")
+        print(f"❌ Error loading Parquet: {str(e)}")
         import traceback
         traceback.print_exc()
         return None
 
 def load_from_csv():
     """Load data from CSV file."""
+    # Check if CSV file exists first
+    if not os.path.exists(CSV_FILE_PATH):
+        print(f"❌ CSV file not found: {CSV_FILE_PATH}")
+        return None
+    
     try:
         # Read CSV file
         df = pd.read_csv(CSV_FILE_PATH)
@@ -226,8 +170,8 @@ def load_from_csv():
 
 def load_all_data(force_refresh=False):
     """
-    Load and cache ALL data in memory from Databricks or CSV file.
-    Prefers Databricks if configured, falls back to CSV.
+    Load and cache ALL data in memory from Parquet or CSV file.
+    Prefers Parquet format for better performance, falls back to CSV.
     
     Args:
         force_refresh: If True, bypass cache and reload from source
@@ -242,14 +186,14 @@ def load_all_data(force_refresh=False):
         print(f"📦 Using cached data ({len(_data_cache)} records)")
         return _data_cache.copy()
     
-    # Try Databricks first if configured
-    if USE_DATABRICKS:
-        print(f"🔄 Loading data from Databricks...")
-        df = load_from_databricks()
+    # Try Parquet first (preferred format - smaller and faster)
+    if os.path.exists(PARQUET_FILE_PATH):
+        print(f"🔄 Loading data from Parquet file...")
+        df = load_from_parquet()
         if df is not None and not df.empty:
             result = df.copy()
         else:
-            print("⚠️  Databricks load failed, falling back to CSV...")
+            print("⚠️  Parquet load failed, falling back to CSV...")
             df = load_from_csv()
             result = df if df is not None else pd.DataFrame(columns=[
                 'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
@@ -257,14 +201,19 @@ def load_all_data(force_refresh=False):
                 'hazardness', 'latitude', 'longitude'
             ])
     else:
-        # Load from CSV
-        print(f"🔄 Loading data from CSV file: {CSV_FILE_PATH}")
+        # Load from CSV if Parquet doesn't exist
+        print(f"🔄 Parquet file not found, loading from CSV...")
         df = load_from_csv()
-        result = df if df is not None else pd.DataFrame(columns=[
-            'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
-            'crime_against_category', 'location', 'area', 'precinct', 'sector',
-            'hazardness', 'latitude', 'longitude'
-        ])
+        if df is not None:
+            result = df
+        else:
+            print("❌ Both Parquet and CSV files not found.")
+            print("   Please ensure crime_data_gold.parquet or crime_data_gold.csv exists in the project directory")
+            result = pd.DataFrame(columns=[
+                'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
+                'crime_against_category', 'location', 'area', 'precinct', 'sector',
+                'hazardness', 'latitude', 'longitude'
+            ])
     
     # Cache the result
     _data_cache = result
@@ -2285,23 +2234,25 @@ def update_map_points(poly_geojson, hour_value, category_value, neighborhood_val
 
 
 if __name__ == "__main__":
-    # Check if CSV file exists
-    if not os.path.exists(CSV_FILE_PATH):
-        print(f"⚠️  Warning: CSV file not found at {CSV_FILE_PATH}")
-        print(f"   Please ensure crime_data_gold.csv is in the same directory as app.py")
-        print()
+    # Check which data file exists
+    if os.path.exists(PARQUET_FILE_PATH):
+        print(f"📁 Data source: {PARQUET_FILE_PATH} (Parquet - optimized)")
+    elif os.path.exists(CSV_FILE_PATH):
+        print(f"📁 Data source: {CSV_FILE_PATH} (CSV)")
+        print("💡 Tip: Convert to Parquet for better performance: python convert_to_parquet.py")
     else:
-        print(f"📁 Data source: {CSV_FILE_PATH}")
-        print()
+        print(f"⚠️  Warning: No data file found")
+        print(f"   Expected: {PARQUET_FILE_PATH} or {CSV_FILE_PATH}")
+    print()
 
     # Pre-warm the data cache on startup
-    print("🔥 Loading data from CSV...")
+    print("🔥 Loading data...")
     try:
         initial_data = load_all_data()
         if initial_data is not None and len(initial_data) > 0:
             print(f"✅ Data loaded successfully with {len(initial_data):,} records")
         else:
-            print("⚠️  WARNING: No data loaded! Check the CSV file.")
+            print("⚠️  WARNING: No data loaded! Check the data file.")
     except Exception as e:
         print(f"❌ ERROR: Failed to load data: {str(e)}")
         print("⚠️  The app will start but visualizations may not work.")
