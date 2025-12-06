@@ -94,7 +94,34 @@ def load_from_parquet():
             print("⚠️  Unexpected column structure in Parquet file")
             return None
         
+        # Optimize memory usage - CRITICAL for Render free plan (512MB limit)
+        print("💾 Optimizing memory usage...")
+        
+        # Convert string columns to category (saves 50-90% memory for repeated values)
+        string_cols = ['offense', 'offense_sub_category', 'crime_against_category', 
+                      'area', 'precinct', 'sector', 'time']
+        for col in string_cols:
+            if col in df.columns:
+                df[col] = df[col].astype('category')
+        
+        # Location column is too unique - keep as string but optimize
+        # (can't use category for highly unique values)
+        
+        # Optimize numeric types
+        if 'hour' in df.columns:
+            df['hour'] = df['hour'].astype('int8')  # 0-23 fits in int8
+        if 'hazardness' in df.columns:
+            df['hazardness'] = pd.to_numeric(df['hazardness'], errors='coerce').astype('float32')
+        if 'latitude' in df.columns:
+            df['latitude'] = df['latitude'].astype('float32')
+        if 'longitude' in df.columns:
+            df['longitude'] = df['longitude'].astype('float32')
+        
+        # Check memory usage
+        memory_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
         print(f"✅ Successfully loaded {len(df)} records from Parquet")
+        print(f"💾 DataFrame memory: {memory_mb:.2f} MB")
+        
         return df
         
     except Exception as e:
@@ -159,7 +186,33 @@ def load_from_csv():
                      'crime_against_category', 'location', 'area', 'precinct', 'sector',
                      'hazardness', 'latitude', 'longitude']].copy()
         
+        # Optimize memory usage by converting data types
+        print("💾 Optimizing memory usage...")
+        
+        # Convert string columns to category (saves significant memory)
+        string_cols = ['offense', 'offense_sub_category', 'crime_against_category', 
+                      'location', 'area', 'precinct', 'sector', 'time']
+        for col in string_cols:
+            if col in result.columns:
+                result[col] = result[col].astype('category')
+        
+        # Optimize numeric types
+        if 'hour' in result.columns:
+            result['hour'] = result['hour'].astype('int8')  # 0-23 fits in int8
+        if 'hazardness' in result.columns:
+            result['hazardness'] = pd.to_numeric(result['hazardness'], errors='coerce').astype('float32')
+        if 'latitude' in result.columns:
+            result['latitude'] = result['latitude'].astype('float32')
+        if 'longitude' in result.columns:
+            result['longitude'] = result['longitude'].astype('float32')
+        
+        # datetime column as string
+        if 'datetime' in result.columns:
+            result['datetime'] = result['datetime'].astype('string')
+        
+        memory_mb = result.memory_usage(deep=True).sum() / (1024 * 1024)
         print(f"✅ Successfully loaded {len(result)} records from CSV")
+        print(f"💾 Memory usage: {memory_mb:.2f} MB")
         return result
         
     except Exception as e:
@@ -184,7 +237,8 @@ def load_all_data(force_refresh=False):
     # Check if cache is still valid (data already loaded)
     if _data_cache is not None and not force_refresh:
         print(f"📦 Using cached data ({len(_data_cache)} records)")
-        return _data_cache.copy()
+        # Return copy only if force_refresh is needed, otherwise return view
+        return _data_cache.copy() if force_refresh else _data_cache
     
     # Try Parquet first (preferred format - smaller and faster)
     if os.path.exists(PARQUET_FILE_PATH):
