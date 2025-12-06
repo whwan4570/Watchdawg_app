@@ -2,7 +2,7 @@
 
 """
 Seattle Crime Data Dashboard (Dash)
-- Reads from local CSV file (crime_data_gold.csv)
+- Reads from SQLite database (crime_data_gold.db) downloaded from Google Drive
 - Provides: date picker, KPI cards, offense distribution pie chart,
             time-of-day bar chart, map, and details table.
 
@@ -29,8 +29,8 @@ import gdown
 # Data file path (relative to app.py)
 DB_FILE_PATH = os.path.join(os.path.dirname(__file__), 'crime_data_gold.db')
 
-# Google Drive URL for SQLite database (optional)
-DB_GDRIVE_URL = os.environ.get('DB_GDRIVE_URL', 'https://drive.google.com/file/d/174V6MxBsK-q_bLbzmEDuxp3e5CaBbUel/view?usp=sharing')
+# Google Drive URL for SQLite database (from environment variable or default)
+DB_GDRIVE_URL = os.environ.get('DB_GDRIVE_URL', 'https://drive.google.com/file/d/1ktC0b1KUwIYJLnXHjD0T0PpSLVo6npL6/view?usp=drive_link')
 
 def ensure_db_file_exists():
     """Download SQLite database from Google Drive if it doesn't exist locally."""
@@ -40,13 +40,20 @@ def ensure_db_file_exists():
     
     # Try to download from Google Drive if URL is provided
     if DB_GDRIVE_URL:
-        print(f"📥 Downloading SQLite database from Google Drive: {DB_GDRIVE_URL}")
+        print(f"📥 Downloading SQLite database from Google Drive...")
+        print(f"   URL: {DB_GDRIVE_URL}")
         try:
             gdown.download(DB_GDRIVE_URL, DB_FILE_PATH, quiet=False, fuzzy=True)
-            print(f"✅ Downloaded SQLite database to: {DB_FILE_PATH}")
-            return True
+            if os.path.exists(DB_FILE_PATH):
+                print(f"✅ Downloaded SQLite database to: {DB_FILE_PATH}")
+                return True
+            else:
+                print(f"❌ Download completed but file not found at: {DB_FILE_PATH}")
+                return False
         except Exception as e:
             print(f"❌ Failed to download SQLite database: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     print("⚠️  No SQLite database found locally and no Google Drive URL provided")
@@ -124,27 +131,6 @@ def load_from_sqlite():
             cursor.execute("SELECT COUNT(*) FROM crimes;")
             total_count = cursor.fetchone()[0]
             print(f"   Total rows in crimes table: {total_count}")
-            
-            # Check if all rows have null coordinates
-            cursor.execute("SELECT COUNT(*) FROM crimes WHERE latitude IS NULL OR longitude IS NULL;")
-            null_coords_count = cursor.fetchone()[0]
-            print(f"   Rows with null coordinates: {null_coords_count}")
-            
-            if total_count > 0:
-                print("   ⚠️  All rows may have null coordinates, trying query without coordinate filter...")
-                query_no_filter = """
-                SELECT 
-                    date, time, hour, datetime, offense, offense_sub_category,
-                    crime_against_category, location, area, precinct, sector,
-                    hazardness, latitude, longitude
-                FROM crimes
-                LIMIT 10
-                """
-                df_sample = pd.read_sql_query(query_no_filter, conn)
-                print(f"   Sample query returned {len(df_sample)} rows")
-                if len(df_sample) > 0:
-                    print(f"   Sample data columns: {list(df_sample.columns)}")
-                    print(f"   Sample data with null coords: {df_sample[['latitude', 'longitude']].isnull().sum().to_dict()}")
         
         # Convert date column to datetime
         if 'date' in df.columns:
@@ -182,7 +168,6 @@ def load_from_sqlite():
         traceback.print_exc()
         return None
 
-
 def load_all_data(force_refresh=False):
     """
     Load and cache ALL data in memory from SQLite database.
@@ -198,7 +183,6 @@ def load_all_data(force_refresh=False):
     # Check if cache is still valid (data already loaded)
     if _data_cache is not None and not force_refresh:
         print(f"📦 Using cached data ({len(_data_cache)} records)")
-        # Return copy only if force_refresh is needed, otherwise return view
         return _data_cache.copy() if force_refresh else _data_cache
     
     # Load from SQLite database
@@ -222,7 +206,7 @@ def load_all_data(force_refresh=False):
     else:
         print("❌ SQLite database not found")
         print(f"   Expected: {DB_FILE_PATH}")
-        print("   Please run: python convert_to_sqlite.py")
+        print("   Please ensure the database file exists or check Google Drive download")
         result = pd.DataFrame(columns=[
             'date', 'time', 'hour', 'datetime', 'offense', 'offense_sub_category',
             'crime_against_category', 'location', 'area', 'precinct', 'sector',
@@ -308,11 +292,9 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.DARKLY], suppress_callback_exceptions=True)
 app.title = "Seattle Crime Dashboard"
-server = app.server  # Expose for gunicorn
 
-# Get initial date range from DB (lazy load - will be loaded on first request)
-# Don't load data at module import time to avoid blocking gunicorn startup
-initial_date_range = {'min': '', 'max': ''}
+# Get initial date range from DB
+initial_date_range = get_date_range()
 
 header = html.Div(
     [
@@ -970,64 +952,17 @@ app.layout = dbc.Container(
 )
 def display_cache_info(_, refresh_count):
     """Display information about the data source."""
-    # Try to load data if cache is empty
     if _data_cache is None or len(_data_cache) == 0:
-        print("⚠️  Cache is empty, attempting to load data...")
-        print(f"   DB file path: {DB_FILE_PATH}")
-        print(f"   DB file exists: {os.path.exists(DB_FILE_PATH)}")
-        
-        try:
-            df = load_all_data()
-            if df is not None and len(df) > 0:
-                record_count = len(df)
-                print(f"✅ Data loaded successfully: {record_count:,} records")
-                return [
-                    html.Div(f"📊 {record_count:,} records", className="small"),
-                    html.Div("📁 Source: crime_data_gold.db", className="small")
-                ]
-            else:
-                print(f"⚠️  Data loaded but empty or None. df is None: {df is None}, df.empty: {df.empty if df is not None else 'N/A'}")
-        except Exception as e:
-            print(f"❌ Error loading data in display_cache_info: {e}")
-            import traceback
-            traceback.print_exc()
-            error_msg = str(e)[:100]  # Limit error message length
-        
-        # Check if database exists
-        if not os.path.exists(DB_FILE_PATH):
-            print(f"❌ Database file not found at: {DB_FILE_PATH}")
-            return html.Div([
-                html.I(className="bi bi-exclamation-triangle text-warning me-1"),
-                "No database file found - downloading from Google Drive..."
-            ], className="small text-warning")
-        else:
-            # Check if database is valid
-            try:
-                conn = sqlite3.connect(DB_FILE_PATH)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                tables = cursor.fetchall()
-                conn.close()
-                print(f"   Database tables: {tables}")
-                
-                if not tables or 'crimes' not in [t[0] for t in tables]:
-                    return html.Div([
-                        html.I(className="bi bi-exclamation-triangle text-warning me-1"),
-                        "Database exists but 'crimes' table not found"
-                    ], className="small text-warning")
-            except Exception as db_error:
-                print(f"❌ Error checking database: {db_error}")
-            
-            return html.Div([
-                html.I(className="bi bi-exclamation-triangle text-warning me-1"),
-                "Data loading failed - check server logs"
-            ], className="small text-warning")
+        return html.Div([
+            html.I(className="bi bi-exclamation-triangle text-warning me-1"),
+            "No data loaded - check CSV file"
+        ], className="small text-warning")
     
     record_count = len(_data_cache) if _data_cache is not None else 0
     
     return [
         html.Div(f"📊 {record_count:,} records", className="small"),
-        html.Div("📁 Source: crime_data_gold.db", className="small")
+        html.Div("📁 Source: crime_data_gold.csv", className="small")
     ]
 
 # Toggle sidebar collapse/expand
@@ -2302,17 +2237,18 @@ if __name__ == "__main__":
     else:
         print(f"⚠️  Warning: SQLite database not found")
         print(f"   Expected: {DB_FILE_PATH}")
-        print("   Please run: python convert_to_sqlite.py")
+        print("   Attempting to download from Google Drive...")
+        ensure_db_file_exists()
     print()
 
     # Pre-warm the data cache on startup
-    print("🔥 Loading data...")
+    print("🔥 Loading data from SQLite database...")
     try:
         initial_data = load_all_data()
         if initial_data is not None and len(initial_data) > 0:
             print(f"✅ Data loaded successfully with {len(initial_data):,} records")
         else:
-            print("⚠️  WARNING: No data loaded! Check the data file.")
+            print("⚠️  WARNING: No data loaded! Check the database file.")
     except Exception as e:
         print(f"❌ ERROR: Failed to load data: {str(e)}")
         print("⚠️  The app will start but visualizations may not work.")
