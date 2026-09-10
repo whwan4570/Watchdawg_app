@@ -17,19 +17,15 @@ and an interactive map.
 1. [Running the App](#running-the-app)
 2. [Screenshots](#screenshots)
 3. [Project Overview](#project-overview)
-4. [Features](#features)
-5. [Tech Stack](#tech-stack)
-6. [Project Structure](#project-structure)
-7. [Getting Started](#getting-started)
-8. [Usage Guide](#usage-guide)
-9. [Data Source](#data-source)
-10. [Data Cleaning and Preprocessing](#data-cleaning-and-preprocessing)
-11. [Database Schema](#database-schema)
-12. [Architecture Notes](#architecture-notes)
-13. [Design Rationale](#design-rationale)
-14. [Deployment](#deployment)
-15. [Troubleshooting](#troubleshooting)
-16. [License and Acknowledgments](#license-and-acknowledgments)
+4. [Tech Stack](#tech-stack)
+5. [Project Structure](#project-structure)
+6. [Data Source](#data-source)
+7. [Data Cleaning and Preprocessing](#data-cleaning-and-preprocessing)
+8. [Database Schema](#database-schema)
+9. [Architecture Notes](#architecture-notes)
+10. [Deployment](#deployment)
+11. [Troubleshooting](#troubleshooting)
+12. [License and Acknowledgments](#license-and-acknowledgments)
 
 ---
 
@@ -56,8 +52,10 @@ python app.py
 ```
 
 Then open **http://localhost:8050** in your browser. Press `Ctrl+C` in the terminal
-to stop the server. See [Getting Started](#getting-started) for more detail,
-including how to provide the database manually.
+to stop the server. To use a different port, set the `PORT` environment variable
+(e.g. `export PORT=8051`). On first run the database is downloaded from Google Drive
+automatically; you can also generate it locally from the source CSV with
+`python convert_to_sqlite.py`.
 
 ---
 
@@ -96,21 +94,6 @@ them progressively narrow the data with a small set of intuitive filters.
 
 ---
 
-## Features
-
-- **Date Range Filter** - select a custom date range that drives every view on the page.
-- **KPI Cards** - total incidents plus a breakdown of crimes against Property, Person, and Society, each with its share of the total.
-- **Neighborhood Trend Chart** - line chart of the top or bottom 10 neighborhoods, ranked either by crime count or by an opinionated Hazard Score; time is aggregated by day, week, or month depending on the selected range.
-- **Crime Type Bar Chart** - stacked bar chart of categories with sub-categories; click a category to drill down into its sub-categories and use "Back" to return.
-- **Interactive Map** - Plotly map of incident points colored by category, with marker size scaled to how many incidents occur at the same location.
-- **Address Search and Radius** - geocode a Seattle address and draw a circle of an adjustable radius (0.1-2 miles) to filter incidents near that point.
-- **Time-of-Day Filter** - vertical range slider to restrict incidents to an hour window, with shift-earlier/later controls.
-- **Neighborhood Filter** - multi-select dropdown populated from the data.
-- **Crime Category Filter** - toggle Person / Property / Society.
-- **Details Table** - sortable, filterable, paginated table of the 500 most recent matching incidents.
-
----
-
 ## Tech Stack
 
 | Layer          | Technology                                              |
@@ -142,97 +125,6 @@ watchdawg_app/
 > The SQLite database (`crime_data_gold.db`) is **not** committed to the repository.
 > It is downloaded from Google Drive at runtime, or you can generate it locally from
 > the source CSV using `convert_to_sqlite.py`.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11 or higher
-
-### Installation
-
-1. Clone the repository and move into the project folder:
-
-   ```bash
-   cd watchdawg_app
-   ```
-
-2. (Recommended) Create and activate a virtual environment:
-
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate          # Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   Dependencies: `dash`, `dash-bootstrap-components`, `dash-mantine-components`,
-   `pandas`, `numpy`, `plotly`, `gunicorn`, `gdown`, `requests`.
-
-4. Provide the database. You have two options:
-
-   - **Automatic (default):** do nothing. On startup the app downloads
-     `crime_data_gold.db` from Google Drive if it is not already present in the
-     project directory.
-   - **Manual:** place an existing `crime_data_gold.db` next to `app.py`, or build
-     it from the source CSV:
-
-     ```bash
-     # Requires crime_data_gold.csv in the same directory
-     python convert_to_sqlite.py
-     ```
-
-5. Run the application:
-
-   ```bash
-   python app.py
-   ```
-
-6. Open `http://localhost:8050` in your browser. To use a different port, set the
-   `PORT` environment variable (e.g. `export PORT=8051`). Press `Ctrl+C` to stop.
-
----
-
-## Usage Guide
-
-### Date Range
-
-Open the Date Filter in the left sidebar and pick a start and end date. All KPIs,
-charts, the map, and the table update to the selected range.
-
-### Map
-
-- Each dot is an incident, colored by category: Person (red), Property (yellow),
-  Society (blue). Larger dots indicate more incidents at the same location.
-- Enter a Seattle address and click **Search** to center the map and draw a radius
-  circle; adjust the slider to change the radius. Click **Reset** to clear it.
-- For performance, the map renders the 5,000 most recent matching incidents; the
-  statistics line shows the true total when it is larger.
-
-### Filters (right of the map)
-
-- **Neighborhood** - select one or more neighborhoods.
-- **Time of Day** - drag the vertical slider handles to set an hour window, or use
-  the up/down buttons to shift the window; **Reset** restores all hours.
-- **Crime Type** - check or uncheck Person / Property / Society.
-
-### Charts
-
-- **Neighborhood Trend** - toggle between **Count** and **Hazard Score**, and
-  between **Highest** and **Lowest** neighborhoods.
-- **Crime Type** - click a category bar to drill into its sub-categories; click
-  **Back** to return to the overview.
-
-### Details Table
-
-Shows the 500 most recent incidents matching the current filters. Columns support
-native sorting and filtering, and the table is paginated.
 
 ---
 
@@ -314,27 +206,6 @@ The app is designed to run within Render's free tier (512 MB memory limit):
 
 > Note: to keep memory usage predictable, the app does not cache query results, so
 > changing a filter re-runs the date-range query for each affected view.
-
----
-
-## Design Rationale
-
-Our visualization was designed with a user-centered approach inspired by Cooper et
-al.'s *About Face*. We recognized that users evaluate safety differently depending
-on their goals, locations, and lived experiences, which led us to prioritize
-intuitive navigation, simple interaction, and a design that never makes users feel
-they made a "wrong" choice. Following Bertin, we encode crime locations primarily
-with spatial position - the most effective visual variable - to give an instant,
-low-cognitive-load snapshot of citywide patterns, while details such as crime type
-and time of day are layered on through hue, size, and filters.
-
-We deliberately limited the filters to three dimensions - neighborhood, crime type,
-and hour of day. Neighborhoods match how people naturally think about location;
-crime types were consolidated from 25+ raw categories into a smaller, interpretable
-set; and time-of-day filtering lets users personalize risk around their daily
-routines. Summary charts above the map support coordinated exploration before users
-dive into spatial detail. Overall, our goal was to give users as much agency as
-possible in a view that is rich in context yet simple to navigate.
 
 ---
 
