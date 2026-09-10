@@ -1,311 +1,334 @@
-# WatchDawg Crime Analytics Dashboard
+# WatchDawg: Seattle Crime Analytics Dashboard
 
-An interactive dashboard for visualizing Seattle crime data using Dash and SQLite. This dashboard provides real-time incident visualization and statistical insights.
+An interactive web dashboard for exploring Seattle crime incident data, built with
+[Dash](https://dash.plotly.com/) and backed by a SQLite database. The dashboard
+lets users filter incidents by date, time of day, neighborhood, and crime category,
+and visualizes the results through KPI cards, trend charts, a drill-down bar chart,
+and an interactive map.
 
-## DATA Cleaning
-Data can available to download at https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data. 
-The raw crime data from the Seattle Police Department undergoes comprehensive cleaning and preprocessing before being loaded into the SQLite database. The cleaning process is documented in `Data Cleaning.ipynb` and includes the following steps:
+**Course:** DATA 511 — Data Visualization
+**Team WatchDawg:** Doyoung Jung, Wonjoon Hwang, Aneesh Singh, DH Lee, Jungmoon Ha, Jonathan Langley Grothe, Derek Tropf
 
-### 1. Missing Value Standardization
+---
 
-- Replace placeholder values (`-`, `REDACTED`, `-1.0`) with `NaN` across all columns
-- Standardize missing data representation for consistent handling
+## Table of Contents
 
-### 2. Geographic Data Validation
+1. [Live Demo](#live-demo)
+2. [Project Overview](#project-overview)
+3. [Features](#features)
+4. [Tech Stack](#tech-stack)
+5. [Project Structure](#project-structure)
+6. [Getting Started](#getting-started)
+7. [Usage Guide](#usage-guide)
+8. [Data Source](#data-source)
+9. [Data Cleaning and Preprocessing](#data-cleaning-and-preprocessing)
+10. [Database Schema](#database-schema)
+11. [Architecture Notes](#architecture-notes)
+12. [Design Rationale](#design-rationale)
+13. [Deployment](#deployment)
+14. [Troubleshooting](#troubleshooting)
+15. [License and Acknowledgments](#license-and-acknowledgments)
 
-- Convert `Latitude` and `Longitude` to numeric types
-- Validate coordinate ranges:
-  - Latitude: 47.0° to 48.1° (Seattle area bounds)
-  - Longitude: -123.5° to -121.0° (Seattle area bounds)
-- Remove records with invalid or out-of-range coordinates
+---
 
-### 3. Neighborhood Data Cleaning
+## Live Demo
 
-- Remove invalid neighborhood values:
-  - `UNKNOWN`
-  - `FK ERROR` (foreign key errors)
-  - `OOJ` (out of jurisdiction)
-- Drop records with missing neighborhood information
+The dashboard is deployed and publicly available:
 
-### 4. Crime Category Standardization
+**https://watchdawg-app.onrender.com/**
 
-- Remove invalid `NIBRS Crime Against Category` values:
-  - `ANY`
-  - `NOT_A_CRIME`
-- Ensure all records have valid crime categories (PERSON, PROPERTY, or SOCIETY)
+No setup is required. On first load the app downloads the SQLite database from
+Google Drive automatically. (The app is hosted on Render's free tier, so the first
+request after a period of inactivity may take a few moments to spin up.)
 
-### 5. Offense Sub-Category Cleaning
+---
 
-- Remove invalid sub-category values:
-  - `UNKNOWN`
-  - `999` (invalid code)
-  - Empty strings
-- Drop records with missing offense sub-category
+## Project Overview
 
-### 6. Location Data Requirements
+Seattle residents, students, and visitors often want to understand the safety
+profile of a neighborhood, but public crime data is large, raw, and hard to
+interpret. WatchDawg turns the Seattle Police Department's incident records into an
+interactive dashboard that answers practical questions such as:
 
-- Remove records missing `Latitude` or `Longitude` (required for map visualization)
-- Remove records missing `Block Address`
-- Remove records missing `Reporting Area`
-- Remove records missing `Beat` information
+- How does crime volume vary across neighborhoods and over time?
+- What types of crime are most common in a given area?
+- What does the incident distribution look like within walking distance of a
+  specific address?
+- How do patterns change by time of day?
 
-### 7. Sector Data Cleaning
+The interface is designed to give users an immediate spatial overview and then let
+them progressively narrow the data with a small set of intuitive filters.
 
-- Remove invalid sector values:
-  - `None`
-  - `99` (invalid code)
-- Ensure all records have valid sector assignments
-
-### 8. Shooting Type Handling
-
-- Fill missing `Shooting Type Group` values with `"No Shooting"` to preserve all records
-
-### 9. Temporal Data Processing
-
-- Extract date components from `Offense Date`:
-  - `Offense Year`
-  - `Offense Month`
-  - `Offense Day`
-  - `Offense Time`
-- Convert to appropriate datetime formats for analysis
-
-### 10. Data Type Optimization
-
-- Convert numeric columns to appropriate types (int, float)
-- Optimize string columns for memory efficiency
-- Ensure consistent data types across the dataset
-
-### 11. Column Selection and Renaming
-
-- Select relevant columns for dashboard visualization
-- Rename columns to standardized names:
-  - `Offense Category` → `offense`
-  - `Offense Sub Category` → `offense_sub_category`
-  - `NIBRS Crime Against Category` → `crime_against_category`
-  - `Block Address` → `location`
-  - `Neighborhood` → `area`
-  - And others as needed
-
-### Result
-
-After cleaning, the dataset contains only records with:
-- Valid geographic coordinates within Seattle boundaries
-- Complete location information (address, neighborhood, precinct, sector)
-- Valid crime classifications
-- Properly formatted temporal data
-
-This ensures high data quality and reliability for all dashboard visualizations and analyses.
+---
 
 ## Features
 
-- 📅 **Date Range Filter**: Select custom date ranges to analyze crime trends
-- 📊 **KPI Cards**: Total incidents, crimes against property, person, and society
-- 📈 **Trend Analysis**: Crime trends by neighborhood over time
-- 📊 **Crime Type Distribution**: Interactive bar chart with drill-down capability
-- 🗺️ **Interactive Map**: Point-based visualization with address search and radius filtering
-- ⏰ **Time Filter**: Filter crimes by hour range
-- 🏘️ **Neighborhood Filter**: Filter by specific neighborhoods
-- 🎯 **Crime Category Filter**: Filter by crime type (Person, Property, Society)
-- 📋 **Detailed Data Table**: View top 500 incidents with sorting and filtering
+- **Date Range Filter** — select a custom date range that drives every view on the page.
+- **KPI Cards** — total incidents plus a breakdown of crimes against Property, Person, and Society, each with its share of the total.
+- **Neighborhood Trend Chart** — line chart of the top or bottom 10 neighborhoods, ranked either by crime count or by an opinionated Hazard Score; time is aggregated by day, week, or month depending on the selected range.
+- **Crime Type Bar Chart** — stacked bar chart of categories with sub-categories; click a category to drill down into its sub-categories and use "Back" to return.
+- **Interactive Map** — Plotly map of incident points colored by category, with marker size scaled to how many incidents occur at the same location.
+- **Address Search and Radius** — geocode a Seattle address and draw a circle of an adjustable radius (0.1–2 miles) to filter incidents near that point.
+- **Time-of-Day Filter** — vertical range slider to restrict incidents to an hour window, with shift-earlier/later controls.
+- **Neighborhood Filter** — multi-select dropdown populated from the data.
+- **Crime Category Filter** — toggle Person / Property / Society.
+- **Details Table** — sortable, filterable, paginated table of the 500 most recent matching incidents.
 
-## CRITICAL EVALUATION (SUCCESS, STRUGGLES ETC)
+---
 
-Our interactive Seattle Crime Visualization was designed with a user-centered approach inspired by Cooper et al.’s About Face. From the beginning, we recognized that users evaluate safety differently depending on their goals, locations, and lived experiences. This insight led us to prioritize intuitive navigation, simple interaction, and a visualization that never makes users feel like they made a “wrong” choice. We focused on showing crime locations using spatial position—the most powerful visual encoding according to Bertin—to give users an instant, low-cognitive-load snapshot of citywide crime patterns. Additional details such as crime type and time of day were intentionally encoded with hue, size, and filters to enrich exploration without overwhelming users.
+## Tech Stack
 
-We refined our filters to three key dimensions—neighborhood, crime type, and hour of day—balancing usability with the limits of our dataset. Neighborhoods were chosen because they align with how people naturally think about location; crime types were consolidated from 25+ categories into a smaller, more interpretable set; and time-of-day filtering allows users to personalize risk based on daily routines. To support coordinated exploration, we incorporated summary plots highlighting crime distributions before users dive into the map. Ultimately, our process was heavily informed by our desire to provide the user as much agency as we could. This visualization process that is rich in context yet simple to navigate, minimizing clutter while maximizing meaningful insight.
+| Layer          | Technology                                              |
+| -------------- | ------------------------------------------------------- |
+| Web framework  | Dash (Flask under the hood)                             |
+| UI components  | dash-bootstrap-components, dash-mantine-components      |
+| Visualization  | Plotly                                                  |
+| Data handling  | pandas, numpy                                           |
+| Storage        | SQLite                                                  |
+| Geocoding      | OpenStreetMap Nominatim API                             |
+| Deployment     | Render (Gunicorn)                                       |
+| File transfer  | gdown / requests (Google Drive download)               |
 
-## Quick Start
+---
 
-### Option 1: Use the Deployed Version (Recommended)
+## Project Structure
 
-The dashboard is deployed and available at:
+```
+watchdawg_app/
+├── app.py                  # Main Dash application (layout + callbacks)
+├── convert_to_sqlite.py    # Converts crime_data_gold.csv -> crime_data_gold.db
+├── Data Cleaning.ipynb     # Data cleaning and preprocessing notebook
+├── requirements.txt        # Python dependencies
+├── render.yaml             # Render deployment configuration
+├── assets/                 # Logo images and custom CSS (auto-served by Dash)
+└── README.md
+```
 
-**🌐 [https://watchdawg-app.onrender.com/](https://watchdawg-app.onrender.com/)**
+> The SQLite database (`crime_data_gold.db`) is **not** committed to the repository.
+> It is downloaded from Google Drive at runtime, or you can generate it locally from
+> the source CSV using `convert_to_sqlite.py`.
 
-Simply open the link in your browser - no setup required! The database will be automatically downloaded from Google Drive on first use.
+---
 
-### Option 2: Run Locally
+## Getting Started
 
-#### Prerequisites
+### Prerequisites
 
 - Python 3.11 or higher
-- `crime_data_gold.db` SQLite database file (or it will be downloaded automatically) or you can convert to db from csv with convert_to_sqlite.py.
 
-#### Setup Steps
+### Installation
 
-1. **Clone or download this repository**
+1. Clone the repository.
 
-2. **Install Dependencies**
+2. Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Required packages:
-- `dash` - Web framework
-- `dash-bootstrap-components` - UI components
-- `dash-mantine-components` - Date picker component
-- `pandas` - Data manipulation
-- `numpy` - Numerical operations
-- `plotly` - Interactive charts
-- `gunicorn` - Production server (for deployment)
-- `gdown` - Google Drive download
-- `requests` - HTTP requests
+   Dependencies: `dash`, `dash-bootstrap-components`, `dash-mantine-components`,
+   `pandas`, `numpy`, `plotly`, `gunicorn`, `gdown`, `requests`.
 
-3. **Prepare the Database**
+3. Provide the database. You have two options:
 
-The app will automatically download the database from Google Drive if it doesn't exist locally. However, if you have the `crime_data_gold.db` file:
+   - **Automatic (default):** do nothing. On startup the app downloads
+     `crime_data_gold.db` from Google Drive if it is not already present in the
+     project directory.
+   - **Manual:** place an existing `crime_data_gold.db` next to `app.py`, or build
+     it from the source CSV:
 
-- Place `crime_data_gold.db` in the same directory as `app.py`
-- The app will use the local file if it exists
+     ```bash
+     # Requires crime_data_gold.csv in the same directory
+     python convert_to_sqlite.py
+     ```
 
-4. **Run the Application**
+4. Run the application:
 
-```bash
-python app.py
-```
+   ```bash
+   python app.py
+   ```
 
-The app will:
-- Check for `crime_data_gold.db` in the current directory
-- If not found, automatically download it from Google Drive
-- Start the server on `http://localhost:8050`
+5. Open `http://localhost:8050` in your browser. To use a different port, set the
+   `PORT` environment variable (e.g. `export PORT=8051`).
 
-5. **Open in Browser**
+---
 
-Navigate to `http://localhost:8050` in your web browser.
+## Usage Guide
+
+### Date Range
+
+Open the Date Filter in the left sidebar and pick a start and end date. All KPIs,
+charts, the map, and the table update to the selected range.
+
+### Map
+
+- Each dot is an incident, colored by category: Person (red), Property (yellow),
+  Society (blue). Larger dots indicate more incidents at the same location.
+- Enter a Seattle address and click **Search** to center the map and draw a radius
+  circle; adjust the slider to change the radius. Click **Reset** to clear it.
+- For performance, the map renders the 5,000 most recent matching incidents; the
+  statistics line shows the true total when it is larger.
+
+### Filters (right of the map)
+
+- **Neighborhood** — select one or more neighborhoods.
+- **Time of Day** — drag the vertical slider handles to set an hour window, or use
+  the up/down buttons to shift the window; **Reset** restores all hours.
+- **Crime Type** — check or uncheck Person / Property / Society.
+
+### Charts
+
+- **Neighborhood Trend** — toggle between **Count** and **Hazard Score**, and
+  between **Highest** and **Lowest** neighborhoods.
+- **Crime Type** — click a category bar to drill into its sub-categories; click
+  **Back** to return to the overview.
+
+### Details Table
+
+Shows the 500 most recent incidents matching the current filters. Columns support
+native sorting and filtering, and the table is paginated.
+
+---
 
 ## Data Source
 
-The dashboard uses a SQLite database (`crime_data_gold.db`) containing Seattle crime incident data from the [Seattle Police Department](https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data), retrieved on December 4, 2025.
+The dashboard uses Seattle Police Department crime incident data from the
+[Seattle Open Data Portal](https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data),
+retrieved on December 4, 2025.
 
-All incidents are reported according to the **National Incident Based Reporting System (NIBRS)**, which captures detailed contextual information for each crime, including:
-- Precise location coordinates
-- Crime classification
-- Temporal data
-- Neighborhood boundaries (using official City of Seattle Neighborhood Map)
+All incidents follow the **National Incident Based Reporting System (NIBRS)**, which
+records detailed context for each crime, including location coordinates, crime
+classification, and temporal data. Neighborhood boundaries are assigned using the
+official City of Seattle Neighborhood Map.
+
+---
+
+## Data Cleaning and Preprocessing
+
+Raw SPD data is cleaned in `Data Cleaning.ipynb` before being loaded into SQLite.
+The process includes:
+
+1. **Missing value standardization** — replace placeholders (`-`, `REDACTED`, `-1.0`) with `NaN`.
+2. **Geographic validation** — keep only coordinates within Seattle bounds (Latitude 47.0–48.1, Longitude -123.5 to -121.0).
+3. **Neighborhood cleaning** — drop `UNKNOWN`, `FK ERROR`, `OOJ`, and missing neighborhoods.
+4. **Crime category standardization** — remove `ANY` and `NOT_A_CRIME`; keep PERSON, PROPERTY, SOCIETY.
+5. **Offense sub-category cleaning** — drop `UNKNOWN`, `999`, and empty values.
+6. **Location requirements** — require coordinates, block address, reporting area, and beat.
+7. **Sector cleaning** — remove `None` and `99`.
+8. **Shooting type handling** — fill missing shooting type with `"No Shooting"`.
+9. **Temporal processing** — derive year, month, day, time, and hour fields.
+10. **Type optimization** — convert columns to appropriate numeric and string types.
+11. **Column selection and renaming** — rename to dashboard-friendly names (e.g. `Block Address` → `location`, `Neighborhood` → `area`).
+
+The result is a clean dataset with valid coordinates, complete location data, valid
+classifications, and well-formed timestamps.
+
+---
 
 ## Database Schema
 
 The `crimes` table contains the following columns:
 
-- `date` - Date of the crime (DATE)
-- `time` - Time of the crime (STRING)
-- `hour` - Hour of the day (0-23) (INTEGER)
-- `datetime` - Combined date and time (STRING)
-- `offense` - Type of crime (STRING)
-- `offense_sub_category` - Sub-category of crime (STRING)
-- `crime_against_category` - Category: PERSON, PROPERTY, or SOCIETY (STRING)
-- `location` - Block address (STRING)
-- `area` - Neighborhood name (STRING)
-- `precinct` - Police precinct (STRING)
-- `sector` - Police sector (STRING)
-- `hazardness` - Hazard score (FLOAT)
-- `latitude` - Latitude coordinate (FLOAT)
-- `longitude` - Longitude coordinate (FLOAT)
+| Column                   | Type    | Description                             |
+| ------------------------ | ------- | --------------------------------------- |
+| `date`                   | DATE    | Date of the incident                    |
+| `time`                   | STRING  | Time of the incident                    |
+| `hour`                   | INTEGER | Hour of day (0–23)                      |
+| `datetime`              | STRING  | Combined date and time                  |
+| `offense`                | STRING  | Offense category                        |
+| `offense_sub_category`   | STRING  | Offense sub-category                    |
+| `crime_against_category` | STRING  | PERSON, PROPERTY, or SOCIETY            |
+| `location`               | STRING  | Block address                           |
+| `area`                   | STRING  | Neighborhood name                       |
+| `precinct`               | STRING  | Police precinct                         |
+| `sector`                 | STRING  | Police sector                           |
+| `hazardness`             | FLOAT   | Opinionated hazard score                |
+| `latitude`               | FLOAT   | Latitude coordinate                     |
+| `longitude`              | FLOAT   | Longitude coordinate                    |
 
-## Usage Guide
+Indexes are created on `date`, `hour`, `area`, `crime_against_category`, and
+`(latitude, longitude)` to speed up queries.
 
-### Date Range Selection
+---
 
-1. Click the **📅 Date Filter** button in the top-left sidebar
-2. Select a date range using the date picker
-3. The dashboard will automatically update all visualizations
+## Architecture Notes
 
-### Map Interaction
+The app is designed to run within Render's free tier (512 MB memory limit):
 
-1. **View Crime Points**: Each dot represents a crime incident, colored by category:
-   - 🔴 Red: Crimes against Person
-   - 🟡 Yellow: Crimes against Property
-   - 🔵 Blue: Crimes against Society
+- **On-demand loading.** Data is queried from SQLite as needed rather than held
+  entirely in memory.
+- **Date-range queries in SQL.** The selected date range (and a coordinate
+  not-null check) is pushed down to the SQL `WHERE` clause, so only rows within the
+  chosen range are read from disk.
+- **In-memory filtering for the rest.** Additional filters — hour window, crime
+  category, neighborhood, and the address radius — are applied in pandas after the
+  date-range query returns.
+- **Efficient dtypes.** String columns are converted to `category` and numeric
+  columns to compact types (`int8`, `float32`) after loading.
 
-2. **Search by Address**:
-   - Enter a Seattle address in the search box
-   - Click "Search" to center the map
-   - Adjust the radius slider to filter crimes within that distance
+> Note: to keep memory usage predictable, the app does not cache query results, so
+> changing a filter re-runs the date-range query for each affected view.
 
-3. **Filter Options**:
-   - **Time Filter**: Use the vertical slider to select hour ranges
-   - **Neighborhood Filter**: Select one or more neighborhoods
-   - **Crime Type Filter**: Check/uncheck crime categories
+---
 
-### Charts
+## Design Rationale
 
-- **Trend Line Chart**: Shows top/bottom 10 neighborhoods by crime count or hazard score
-  - Toggle between "Count" and "Hazard Score" metrics
-  - Switch between "Highest" and "Lowest" neighborhoods
+Our visualization was designed with a user-centered approach inspired by Cooper et
+al.'s *About Face*. We recognized that users evaluate safety differently depending
+on their goals, locations, and lived experiences, which led us to prioritize
+intuitive navigation, simple interaction, and a design that never makes users feel
+they made a "wrong" choice. Following Bertin, we encode crime locations primarily
+with spatial position — the most effective visual variable — to give an instant,
+low-cognitive-load snapshot of citywide patterns, while details such as crime type
+and time of day are layered on through hue, size, and filters.
 
-- **Crime Type Bar Chart**: 
-  - Click on a category bar to drill down into subcategories
-  - Click "← Back" to return to category overview
+We deliberately limited the filters to three dimensions — neighborhood, crime type,
+and hour of day. Neighborhoods match how people naturally think about location;
+crime types were consolidated from 25+ raw categories into a smaller, interpretable
+set; and time-of-day filtering lets users personalize risk around their daily
+routines. Summary charts above the map support coordinated exploration before users
+dive into spatial detail. Overall, our goal was to give users as much agency as
+possible in a view that is rich in context yet simple to navigate.
 
-### Data Table
-
-- View the top 500 incidents matching your filters
-- Sort and filter columns directly in the table
-- Use pagination to navigate through results
-
-## Memory Optimization
-
-This dashboard is optimized for memory efficiency:
-
-- **On-Demand Loading**: Data is loaded only when needed, not all at once
-- **Date Range Queries**: Only queries data within the selected date range
-- **Efficient Data Types**: Uses optimized pandas data types (category, int8, float32)
-- **No Caching**: Prevents memory spikes by avoiding full dataset caching
-
-This allows the app to run efficiently on Render's free tier (512MB memory limit).
+---
 
 ## Deployment
 
-The dashboard is deployed on [Render](https://render.com) using:
+The dashboard is deployed on [Render](https://render.com) using the configuration in
+`render.yaml`:
 
-- **Runtime**: Python 3.11
-- **Server**: Gunicorn with 1 worker, 2 threads
-- **Database**: Automatically downloaded from Google Drive on first deployment
+- **Runtime:** Python 3.11
+- **Server:** Gunicorn with 1 worker and 2 threads
+- **Database:** downloaded from Google Drive on first run
 
 ### Environment Variables
 
-- `DB_GDRIVE_URL`: Google Drive URL for the SQLite database
-- `DASH_DEBUG`: Set to "0" for production
-- `PORT`: Automatically set by Render
+- `DB_GDRIVE_URL` — Google Drive URL for the SQLite database. A default is defined in
+  `app.py`; set this variable to override it.
+- `DASH_DEBUG` — set to `0` for production (debug is on by default when running locally).
+- `PORT` — the port to bind to (set automatically by Render).
+
+---
 
 ## Troubleshooting
 
-### Database Not Found
+**"No data loaded" / database not found**
+- Confirm `crime_data_gold.db` exists next to `app.py`, or that the app can reach the
+  Google Drive URL.
+- Check the application logs for download errors; a Google Drive sharing
+  misconfiguration can cause an HTML page to be downloaded instead of the database.
 
-If you see "No data loaded" errors:
+**Memory issues**
+- Narrow the date range and apply filters to reduce the amount of data loaded.
 
-1. Check that `crime_data_gold.db` exists in the project directory
-2. Verify Google Drive URL is accessible (check `DB_GDRIVE_URL` in `render.yaml`)
-3. Check application logs for download errors
+**Port already in use**
+- Set a different port: `export PORT=8051 && python app.py`.
 
-### Memory Issues
+---
 
-If you encounter memory errors:
+## License and Acknowledgments
 
-1. Reduce the date range selection
-2. Use filters to narrow down results
-3. The app automatically limits data loading for memory efficiency
+This project was developed for educational purposes as part of **DATA 511**.
 
-### Port Already in Use
-
-If port 8050 is already in use:
-
-```bash
-# Set a different port
-export PORT=8051
-python app.py
-```
-
-## Team
-
-**WatchDawg**: Doyoung Jung, Wonjoon Hwang, Aneesh Singh, DH Lee, Jungmoon Ha, Jonathan Langley Grothe, Derek Tropf
-
-## License
-
-This project is for educational purposes as part of DATA 511.
-
-## Links
-
-- **Live Dashboard**: [https://watchdawg-app.onrender.com/](https://watchdawg-app.onrender.com/)
-- **Data Source**: [Seattle Police Department Crime Data](https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data)
+- Data: [Seattle Police Department Crime Data](https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data)
+- Geocoding: [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/)
