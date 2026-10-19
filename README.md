@@ -12,6 +12,12 @@ and an interactive map.
 
 ---
 
+## My contribution and public implementation
+
+I built Python and SQL workflows over 900K+ Seattle public-safety records and contributed interactive geospatial and time-series views. The public dashboard implementation uses SQLite date-range queries and compact pandas data types to manage memory. The team and course context are listed above.
+
+This repository documents the SQLite/Dash dashboard. Forecasting or alternative database experiments are not presented as features of the current public app.
+
 ## Table of Contents
 
 1. [Running the App](#running-the-app)
